@@ -1,60 +1,63 @@
-const initSqlJs = require('sql.js');
+const { createClient } = require('@libsql/client');
 const fs = require('fs');
-const path = require('path');
 const config = require('../config');
 
-/* Убеждаемся, что папка для базы данных существует */
-const dbDir = path.dirname(config.dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+let client;
+let schemaReady;
 
-let db;
+/**
+ * Создаёт (или возвращает уже созданный) клиент Turso / libSQL.
+ */
+const getClient = () => {
+  if (client) return client;
 
-/* Инициализация базы данных */
+  if (!config.turso.url) {
+    throw new Error(
+      '[DB] Не задан TURSO_DATABASE_URL. Скопируйте .env.example в .env и укажите данные из Turso Dashboard.'
+    );
+  }
+
+  client = createClient({
+    url: config.turso.url,
+    authToken: config.turso.authToken,
+  });
+
+  return client;
+};
+
+/**
+ * Применяет schema.sql к Turso (CREATE TABLE IF NOT EXISTS).
+ * Безопасно вызывать повторно — выполняется один раз за процесс.
+ */
+const ensureDb = async () => {
+  if (schemaReady) return schemaReady;
+
+  schemaReady = (async () => {
+    const db = getClient();
+    const schemaSql = fs.readFileSync(config.schemaPath, 'utf-8');
+    await db.executeMultiple(schemaSql);
+    console.log('[DB] Подключено к Turso:', config.turso.url);
+  })();
+
+  return schemaReady;
+};
+
+/**
+ * Инициализация при локальном запуске (index.js).
+ * В serverless на Vercel используйте ensureDb().
+ */
 const initDb = async () => {
   try {
-    const SQL = await initSqlJs();
-    
-    /* Проверяем, существует ли файл БД. Если да — читаем его, иначе создаём новый */
-    if (fs.existsSync(config.dbPath)) {
-      const fileBuffer = fs.readFileSync(config.dbPath);
-      db = new SQL.Database(fileBuffer);
-    } else {
-      db = new SQL.Database();
-    }
-
-    /* Читаем SQL-скрипт схемы и выполняем его */
-    const schemaSql = fs.readFileSync(config.schemaPath, 'utf-8');
-    db.run(schemaSql);
-
-    /* Сохраняем изменения на диск */
-    saveDb();
-
-    console.log('[DB] База данных успешно подключена: ' + config.dbPath);
+    await ensureDb();
   } catch (error) {
-    console.error('[DB] Ошибка инициализации базы данных:', error);
+    console.error('[DB] Ошибка инициализации базы данных:', error.message || error);
     process.exit(1);
   }
 };
 
-/* Функция для сохранения состояния БД в файл */
-const saveDb = () => {
-  if (db) {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(config.dbPath, buffer);
-  }
-};
-
-/* Экспортируем промис, который разрешается объектом БД, и функцию сохранения */
 module.exports = {
-  getDb: async () => {
-    if (!db) {
-      await initDb();
-    }
-    return db;
-  },
-  saveDb,
-  initDb
+  getClient,
+  getDb: getClient,
+  ensureDb,
+  initDb,
 };

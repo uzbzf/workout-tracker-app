@@ -1,4 +1,5 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api/v1';
+/* На Vercel — относительный /api/v1 (тот же домен). Локально — из .env или localhost */
+const BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
 const buildQueryString = (params) => {
   if (!params || typeof params !== 'object') return '';
